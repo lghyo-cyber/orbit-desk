@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
-import { AnimatePresence, Reorder, motion, useDragControls } from "motion/react";
-import { Check, ChevronDown, ChevronUp, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { Check, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
 import { currentStep, isArchived, stepsFinished, useOrbitStore } from "@/lib/store";
 import type { Step, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,6 @@ export function TaskCard({
   const updateStepWidth = useOrbitStore((s) => s.updateStepWidth);
   const removeStep = useOrbitStore((s) => s.removeStep);
   const reorderSteps = useOrbitStore((s) => s.reorderSteps);
-  const moveStep = useOrbitStore((s) => s.moveStep);
   const setTimerTask = useOrbitStore((s) => s.setTimerTask);
   const timerTaskId = useOrbitStore((s) => s.timer.taskId);
   const timerRunning = useOrbitStore((s) => s.timer.running);
@@ -222,30 +221,17 @@ export function TaskCard({
       {selected && (
         <div className={cn("mt-3 border-t border-border pt-3", fill && "min-h-0 flex-1 overflow-y-auto")}>
           <div className="flex flex-col gap-1.5">
-            <Reorder.Group
-              as="div"
-              axis="y"
-              values={task.steps.map((s) => s.id)}
-              onReorder={(ids) => reorderSteps(task.id, ids)}
-              className="flex flex-col gap-1.5"
-            >
-              {task.steps.map((step, i) => (
-                <StepChip
-                  key={step.id}
-                  step={step}
-                  index={i}
-                  total={task.steps.length}
-                  isCurrent={current?.id === step.id}
-                  pending={pending}
-                  taskId={task.id}
-                  onChipCheck={onChipCheck}
-                  updateStepTitle={updateStepTitle}
-                  updateStepWidth={updateStepWidth}
-                  removeStep={removeStep}
-                  moveStep={moveStep}
-                />
-              ))}
-            </Reorder.Group>
+            <StepBoard
+              taskId={task.id}
+              steps={task.steps}
+              currentId={current?.id}
+              pending={pending}
+              onChipCheck={onChipCheck}
+              updateStepTitle={updateStepTitle}
+              updateStepWidth={updateStepWidth}
+              removeStep={removeStep}
+              reorderSteps={reorderSteps}
+            />
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -277,32 +263,174 @@ export function TaskCard({
   );
 }
 
-function StepChip({
-  step,
-  index,
-  total,
-  isCurrent,
-  pending,
+function insertIndexAtPoint(
+  board: HTMLElement,
+  x: number,
+  y: number,
+  dragId: string,
+  order: string[],
+): number {
+  const rest = order.filter((id) => id !== dragId);
+  if (rest.length === 0) return 0;
+  let best = 0;
+  let bestScore = Infinity;
+  let after = false;
+  for (let i = 0; i < rest.length; i++) {
+    const id = rest[i];
+    if (!id) continue;
+    const el = board.querySelector(`[data-step-id="${CSS.escape(id)}"]`);
+    if (!(el instanceof HTMLElement)) continue;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const dx = x - cx;
+    const dy = y - cy;
+    const score = dx * dx + dy * dy;
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+      after = Math.abs(dx) >= Math.abs(dy) ? dx > 0 : dy > 0;
+    }
+  }
+  return after ? best + 1 : best;
+}
+
+function StepBoard({
   taskId,
+  steps,
+  currentId,
+  pending,
   onChipCheck,
   updateStepTitle,
   updateStepWidth,
   removeStep,
-  moveStep,
+  reorderSteps,
 }: {
-  step: Step;
-  index: number;
-  total: number;
-  isCurrent: boolean;
-  pending: boolean;
   taskId: string;
+  steps: Step[];
+  currentId?: string;
+  pending: boolean;
   onChipCheck: (step: Step) => void;
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
   updateStepWidth: (taskId: string, stepId: string, width: number) => void;
   removeStep: (taskId: string, stepId: string) => void;
-  moveStep: (taskId: string, stepId: string, dir: -1 | 1) => void;
+  reorderSteps: (taskId: string, orderedIds: string[]) => void;
 }) {
-  const controls = useDragControls();
+  const boardRef = useRef<HTMLDivElement>(null);
+  const orderRef = useRef(steps.map((s) => s.id));
+  orderRef.current = steps.map((s) => s.id);
+  const [float, setFloat] = useState<{
+    id: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
+  const grab = useRef<{ id: string; ox: number; oy: number } | null>(null);
+
+  useEffect(() => {
+    function move(e: PointerEvent) {
+      const g = grab.current;
+      const board = boardRef.current;
+      if (!g || !board) return;
+      const x = e.clientX - g.ox;
+      const y = e.clientY - g.oy;
+      setFloat((f) => (f && f.id === g.id ? { ...f, x, y } : f));
+      const insert = insertIndexAtPoint(board, e.clientX, e.clientY, g.id, orderRef.current);
+      const rest = orderRef.current.filter((id) => id !== g.id);
+      const next = [...rest.slice(0, insert), g.id, ...rest.slice(insert)];
+      if (next.some((id, i) => id !== orderRef.current[i])) {
+        orderRef.current = next;
+        reorderSteps(taskId, next);
+      }
+    }
+    function up() {
+      grab.current = null;
+      setFloat(null);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, [reorderSteps, taskId]);
+
+  const dragging = steps.find((s) => s.id === float?.id) ?? null;
+
+  return (
+    <>
+      <div ref={boardRef} className="flex flex-wrap items-start gap-1.5">
+        {steps.map((step, i) => (
+          <StepChip
+            key={step.id}
+            step={step}
+            index={i}
+            isCurrent={currentId === step.id}
+            pending={pending}
+            taskId={taskId}
+            lifted={float?.id === step.id}
+            onChipCheck={onChipCheck}
+            updateStepTitle={updateStepTitle}
+            updateStepWidth={updateStepWidth}
+            removeStep={removeStep}
+            onLift={(e, box) => {
+              const r = box.getBoundingClientRect();
+              grab.current = {
+                id: step.id,
+                ox: e.clientX - r.left,
+                oy: e.clientY - r.top,
+              };
+              setFloat({ id: step.id, x: r.left, y: r.top, w: r.width, h: r.height });
+            }}
+          />
+        ))}
+      </div>
+      {float && dragging ? (
+        <div
+          aria-hidden
+          style={{
+            width: float.w,
+            height: float.h,
+            transform: `translate3d(${float.x}px, ${float.y}px, 0)`,
+          }}
+          className="pointer-events-none fixed top-0 left-0 z-50 flex items-center gap-1 rounded-[10px] bg-elevated/92 px-2 shadow-glass backdrop-blur-md"
+        >
+          <GripVertical className="size-3 text-subtle" />
+          <span className="truncate text-ui text-fg">{dragging.title || "Step"}</span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function StepChip({
+  step,
+  index,
+  isCurrent,
+  pending,
+  taskId,
+  lifted,
+  onChipCheck,
+  updateStepTitle,
+  updateStepWidth,
+  removeStep,
+  onLift,
+}: {
+  step: Step;
+  index: number;
+  isCurrent: boolean;
+  pending: boolean;
+  taskId: string;
+  lifted: boolean;
+  onChipCheck: (step: Step) => void;
+  updateStepTitle: (taskId: string, stepId: string, title: string) => void;
+  updateStepWidth: (taskId: string, stepId: string, width: number) => void;
+  removeStep: (taskId: string, stepId: string) => void;
+  onLift: (e: ReactPointerEvent<HTMLButtonElement>, box: HTMLDivElement) => void;
+}) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number | null>(step.width ?? null);
   const widthRef = useRef<number | null>(width);
@@ -313,7 +441,7 @@ function StepChip({
     widthRef.current = step.width ?? null;
   }, [step.width]);
 
-  function onResizeStart(e: PointerEvent<HTMLButtonElement>) {
+  function onResizeStart(e: ReactPointerEvent<HTMLButtonElement>) {
     e.stopPropagation();
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -322,7 +450,7 @@ function StepChip({
     widthRef.current = w;
     setWidth(w);
   }
-  function onResizeMove(e: PointerEvent<HTMLButtonElement>) {
+  function onResizeMove(e: ReactPointerEvent<HTMLButtonElement>) {
     if (!drag.current) return;
     const next = Math.min(720, Math.max(160, drag.current.w + (e.clientX - drag.current.x)));
     widthRef.current = next;
@@ -335,59 +463,32 @@ function StepChip({
   }
 
   return (
-    <Reorder.Item
-      as="div"
+    <motion.div
+      layout
+      data-step-id={step.id}
       ref={boxRef}
-      value={step.id}
-      dragListener={false}
-      dragControls={controls}
       style={width != null ? { width } : undefined}
       className={cn(
         "glass-tight group/chip relative flex h-8 max-w-full items-center gap-1 rounded-[10px] pl-1 pr-3",
         width == null && "w-max",
         step.done && "opacity-70",
         isCurrent && "shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-violet)_55%,transparent)]",
+        lifted && "opacity-30",
       )}
+      transition={{ type: "spring", duration: 0.28, bounce: 0 }}
     >
       <button
         type="button"
         aria-label="Drag to reorder"
         onPointerDown={(e) => {
           e.stopPropagation();
-          controls.start(e);
+          e.preventDefault();
+          if (boxRef.current) onLift(e, boxRef.current);
         }}
         className="tap flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-subtle hover:text-fg active:cursor-grabbing"
       >
         <GripVertical className="size-3" />
       </button>
-      <div className="flex shrink-0 flex-col">
-        <button
-          type="button"
-          aria-label="Move step up"
-          disabled={index === 0}
-          onClick={(e) => {
-            e.stopPropagation();
-            moveStep(taskId, step.id, -1);
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="tap flex h-3 w-4 items-center justify-center text-subtle hover:text-fg disabled:opacity-20"
-        >
-          <ChevronUp className="size-3" />
-        </button>
-        <button
-          type="button"
-          aria-label="Move step down"
-          disabled={index === total - 1}
-          onClick={(e) => {
-            e.stopPropagation();
-            moveStep(taskId, step.id, 1);
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="tap flex h-3 w-4 items-center justify-center text-subtle hover:text-fg disabled:opacity-20"
-        >
-          <ChevronDown className="size-3" />
-        </button>
-      </div>
       <StepCheck
         checked={step.done || (pending && isCurrent)}
         onToggle={() => onChipCheck(step)}
@@ -426,7 +527,7 @@ function StepChip({
         onPointerCancel={onResizeEnd}
         className="absolute top-1 right-0 h-6 w-1.5 cursor-ew-resize rounded-full bg-fg/30 hover:bg-fg/60"
       />
-    </Reorder.Item>
+    </motion.div>
   );
 }
 
