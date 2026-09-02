@@ -1,0 +1,13 @@
+node_modules
+.tanstack
+.vercel
+screenshots
+artifacts
+docs
+.grok/skills
+.grok/references
+.grok/preview.log
+.grok/status
+*.log
+.DS_Store
+attachments/
