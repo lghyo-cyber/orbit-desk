@@ -27,7 +27,7 @@ export function CommandPalette({
   const tasks = useOrbitStore((s) => s.tasks);
   const addTask = useOrbitStore((s) => s.addTask);
   const selectTask = useOrbitStore((s) => s.selectTask);
-  const completeCurrentStep = useOrbitStore((s) => s.completeCurrentStep);
+  const advanceTask = useOrbitStore((s) => s.advanceTask);
   const selectedTaskId = useOrbitStore((s) => s.selectedTaskId);
   const startTimer = useOrbitStore((s) => s.startTimer);
   const pauseTimer = useOrbitStore((s) => s.pauseTimer);
@@ -81,12 +81,12 @@ export function CommandPalette({
             <Command.Item
               disabled={!selectedTaskId}
               onSelect={() => {
-                if (selectedTaskId) completeCurrentStep(selectedTaskId);
+                if (selectedTaskId) advanceTask(selectedTaskId);
                 onClose();
               }}
             >
               <Check className="size-4 text-muted" />
-              Complete current step
+              Complete step / move to Done
               <span className="ml-auto font-mono text-micro text-subtle">Ctrl 3</span>
             </Command.Item>
             <Command.Item

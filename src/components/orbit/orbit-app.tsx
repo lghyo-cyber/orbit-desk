@@ -45,7 +45,7 @@ function Desk() {
   const selectedTaskId = useOrbitStore((s) => s.selectedTaskId);
   const selectTask = useOrbitStore((s) => s.selectTask);
   const addTask = useOrbitStore((s) => s.addTask);
-  const completeCurrentStep = useOrbitStore((s) => s.completeCurrentStep);
+  const advanceTask = useOrbitStore((s) => s.advanceTask);
   const startTimer = useOrbitStore((s) => s.startTimer);
   const pauseTimer = useOrbitStore((s) => s.pauseTimer);
   const resetTimer = useOrbitStore((s) => s.resetTimer);
@@ -95,7 +95,7 @@ function Desk() {
       if (key === "3") {
         if (selectedTaskId) {
           e.preventDefault();
-          completeCurrentStep(selectedTaskId);
+          advanceTask(selectedTaskId);
         }
         return;
       }
@@ -134,7 +134,7 @@ function Desk() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     addTask,
-    completeCurrentStep,
+    advanceTask,
     pauseTimer,
     resetTimer,
     selectTask,

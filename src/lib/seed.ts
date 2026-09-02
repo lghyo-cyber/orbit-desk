@@ -95,6 +95,7 @@ export const SEED_TASKS: Task[] = [
     ],
     createdAt: hours(200),
     updatedAt: hours(28),
+    archivedAt: hours(28),
   },
 ];
 

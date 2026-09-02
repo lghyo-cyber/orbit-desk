@@ -37,6 +37,10 @@ export type OrbitState = {
   reorderSteps: (taskId: string, orderedIds: string[]) => void;
   completeCurrentStep: (taskId: string) => void;
   uncompleteStep: (taskId: string, stepId: string) => void;
+  moveStep: (taskId: string, stepId: string, dir: -1 | 1) => void;
+  archiveTask: (taskId: string) => void;
+  unarchiveTask: (taskId: string) => void;
+  advanceTask: (taskId: string) => void;
 
   toggleWidget: (kind: WidgetKind, on: boolean) => void;
   moveWidget: (kind: WidgetKind, dir: -1 | 1) => void;
@@ -61,11 +65,20 @@ function currentStep(task: Task) {
   return task.steps.find((s) => !s.done) ?? null;
 }
 
-function isComplete(task: Task) {
+function stepsFinished(task: Task) {
   return task.steps.length > 0 && task.steps.every((s) => s.done);
 }
 
-export { currentStep, isComplete };
+function isArchived(task: Task) {
+  return Boolean(task.archivedAt);
+}
+
+/** Task is in the Done tab only after the user confirms Move to Done. */
+function isComplete(task: Task) {
+  return isArchived(task);
+}
+
+export { currentStep, isComplete, isArchived, stepsFinished };
 
 export const useOrbitStore = create<OrbitState>()(
   persist(
@@ -191,6 +204,23 @@ export const useOrbitStore = create<OrbitState>()(
           }),
         })),
 
+      moveStep: (taskId, stepId, dir) =>
+        set((s) => ({
+          tasks: s.tasks.map((t) => {
+            if (t.id !== taskId) return t;
+            const i = t.steps.findIndex((st) => st.id === stepId);
+            const j = i + dir;
+            if (i < 0 || j < 0 || j >= t.steps.length) return t;
+            const next = [...t.steps];
+            const a = next[i];
+            const b = next[j];
+            if (!a || !b) return t;
+            next[i] = b;
+            next[j] = a;
+            return touch({ ...t, steps: next });
+          }),
+        })),
+
       completeCurrentStep: (taskId) => {
         const task = get().tasks.find((t) => t.id === taskId);
         if (!task) return;
@@ -222,11 +252,38 @@ export const useOrbitStore = create<OrbitState>()(
             t.id === taskId
               ? touch({
                   ...t,
+                  archivedAt: undefined,
                   steps: t.steps.map((st) => (st.id === stepId ? { ...st, done: false } : st)),
                 })
               : t,
           ),
         })),
+
+      archiveTask: (taskId) =>
+        set((s) => ({
+          tasks: s.tasks.map((t) =>
+            t.id === taskId && stepsFinished(t) && !t.archivedAt
+              ? touch({ ...t, archivedAt: Date.now() })
+              : t,
+          ),
+        })),
+
+      unarchiveTask: (taskId) =>
+        set((s) => ({
+          tasks: s.tasks.map((t) =>
+            t.id === taskId ? touch({ ...t, archivedAt: undefined }) : t,
+          ),
+        })),
+
+      advanceTask: (taskId) => {
+        const task = get().tasks.find((t) => t.id === taskId);
+        if (!task) return;
+        if (currentStep(task)) {
+          get().completeCurrentStep(taskId);
+          return;
+        }
+        if (stepsFinished(task) && !task.archivedAt) get().archiveTask(taskId);
+      },
 
       toggleWidget: (kind, on) =>
         set((s) => {

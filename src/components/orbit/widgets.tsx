@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pause, Play, RotateCcw, ArrowUp, ArrowDown, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { currentStep, isComplete, useOrbitStore } from "@/lib/store";
+import { currentStep, isComplete, stepsFinished, useOrbitStore } from "@/lib/store";
 import { WIDGET_CATALOG, type WidgetKind } from "@/lib/types";
 import { cn, formatTime, isSafeHttpUrl } from "@/lib/utils";
 
@@ -474,7 +474,7 @@ export function NotesPanel() {
   const selectedId = useOrbitStore((s) => s.selectedTaskId);
   const task = useOrbitStore((s) => s.tasks.find((t) => t.id === selectedId) ?? null);
   const updateTask = useOrbitStore((s) => s.updateTask);
-  const completeCurrentStep = useOrbitStore((s) => s.completeCurrentStep);
+  const advanceTask = useOrbitStore((s) => s.advanceTask);
 
   if (!task) {
     return (
@@ -498,6 +498,8 @@ export function NotesPanel() {
             <>
               Ctrl 3 advances <span className="text-fg">{cur.title}</span>
             </>
+          ) : stepsFinished(task) && !task.archivedAt ? (
+            "Ctrl 3 moves this to Done"
           ) : (
             "Saved as you type"
           )}
@@ -509,7 +511,7 @@ export function NotesPanel() {
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
             e.preventDefault();
-            completeCurrentStep(task.id);
+            advanceTask(task.id);
           }
         }}
         placeholder="Questions, blockers, extra work that shows up mid-flight…"

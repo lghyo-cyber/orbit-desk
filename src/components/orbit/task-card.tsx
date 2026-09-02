@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { AnimatePresence, Reorder, motion, useDragControls } from "motion/react";
-import { Check, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
-import { currentStep, isComplete, useOrbitStore } from "@/lib/store";
+import { Check, ChevronDown, ChevronUp, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
+import { currentStep, isArchived, stepsFinished, useOrbitStore } from "@/lib/store";
 import type { Step, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -20,12 +20,15 @@ export function TaskCard({
   const updateTask = useOrbitStore((s) => s.updateTask);
   const removeTask = useOrbitStore((s) => s.removeTask);
   const completeCurrentStep = useOrbitStore((s) => s.completeCurrentStep);
+  const archiveTask = useOrbitStore((s) => s.archiveTask);
+  const unarchiveTask = useOrbitStore((s) => s.unarchiveTask);
   const uncompleteStep = useOrbitStore((s) => s.uncompleteStep);
   const addStep = useOrbitStore((s) => s.addStep);
   const updateStepTitle = useOrbitStore((s) => s.updateStepTitle);
   const updateStepWidth = useOrbitStore((s) => s.updateStepWidth);
   const removeStep = useOrbitStore((s) => s.removeStep);
   const reorderSteps = useOrbitStore((s) => s.reorderSteps);
+  const moveStep = useOrbitStore((s) => s.moveStep);
   const setTimerTask = useOrbitStore((s) => s.setTimerTask);
   const timerTaskId = useOrbitStore((s) => s.timer.taskId);
   const timerRunning = useOrbitStore((s) => s.timer.running);
@@ -37,7 +40,8 @@ export function TaskCard({
   const [dir, setDir] = useState(1);
 
   const current = currentStep(task);
-  const done = isComplete(task);
+  const finished = stepsFinished(task);
+  const archived = isArchived(task);
   const doneCount = task.steps.filter((s) => s.done).length;
   const focused = timerTaskId === task.id && timerRunning;
 
@@ -87,7 +91,7 @@ export function TaskCard({
         "glass group relative rounded-2xl p-4 transition-shadow duration-150",
         selected ? "shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-violet)_55%,transparent)]" : "hover:shadow-border-hover",
         focused && "orbit-ring-pulse",
-        done && "opacity-80",
+        archived && "opacity-80",
         fill && "flex h-full min-h-0 flex-col overflow-hidden",
       )}
     >
@@ -97,9 +101,13 @@ export function TaskCard({
             <span className="tabular-nums">ORB-{task.number}</span>
             <span className="size-0.5 shrink-0 rounded-full bg-subtle" />
             <span className="truncate">{task.owner}</span>
-            {done ? (
+            {archived ? (
               <span className="rounded-full bg-lime/15 px-1.5 py-px text-lime normal-case tracking-normal">
                 Done
+              </span>
+            ) : finished ? (
+              <span className="rounded-full bg-violet/18 px-1.5 py-px text-violet normal-case tracking-normal">
+                Ready
               </span>
             ) : task.steps.length > 0 ? (
               <span className="tabular-nums normal-case tracking-normal text-muted">
@@ -149,7 +157,7 @@ export function TaskCard({
       <div className="mt-3 overflow-hidden">
         <AnimatePresence mode="wait" initial={false} custom={dir}>
           <motion.div
-            key={pending && current ? `${current.id}-pending` : (current?.id ?? (done ? "done" : "empty"))}
+            key={pending && current ? `${current.id}-pending` : (current?.id ?? (archived ? "done" : finished ? "ready" : "empty"))}
             custom={dir}
             initial={{ x: dir * 36, opacity: 0, filter: "blur(4px)" }}
             animate={{ x: 0, opacity: 1, filter: "blur(0px)" }}
@@ -157,14 +165,30 @@ export function TaskCard({
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="flex items-center gap-3"
           >
-            {done ? (
+            {archived ? (
               <>
-                <span className="flex size-9 items-center justify-center rounded-xl bg-lime/15 text-lime">
-                  <Check className="size-4" strokeWidth={2.5} />
-                </span>
+                <StepCheck
+                  checked
+                  onToggle={() => unarchiveTask(task.id)}
+                  accent
+                  label="Move back to Active"
+                />
                 <div>
-                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Complete</p>
+                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Done</p>
                   <p className="text-ui text-fg">All steps finished</p>
+                </div>
+              </>
+            ) : finished ? (
+              <>
+                <StepCheck
+                  checked={false}
+                  onToggle={() => archiveTask(task.id)}
+                  accent
+                  label="Move to Done"
+                />
+                <div>
+                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Move to Done?</p>
+                  <p className="text-ui text-fg">Check to file this task</p>
                 </div>
               </>
             ) : current ? (
@@ -197,19 +221,20 @@ export function TaskCard({
 
       {selected && (
         <div className={cn("mt-3 border-t border-border pt-3", fill && "min-h-0 flex-1 overflow-y-auto")}>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <Reorder.Group
               as="div"
-              axis="x"
+              axis="y"
               values={task.steps.map((s) => s.id)}
               onReorder={(ids) => reorderSteps(task.id, ids)}
-              className="flex flex-wrap items-center gap-1.5"
+              className="flex flex-col gap-1.5"
             >
               {task.steps.map((step, i) => (
                 <StepChip
                   key={step.id}
                   step={step}
                   index={i}
+                  total={task.steps.length}
                   isCurrent={current?.id === step.id}
                   pending={pending}
                   taskId={task.id}
@@ -217,6 +242,7 @@ export function TaskCard({
                   updateStepTitle={updateStepTitle}
                   updateStepWidth={updateStepWidth}
                   removeStep={removeStep}
+                  moveStep={moveStep}
                 />
               ))}
             </Reorder.Group>
@@ -254,6 +280,7 @@ export function TaskCard({
 function StepChip({
   step,
   index,
+  total,
   isCurrent,
   pending,
   taskId,
@@ -261,9 +288,11 @@ function StepChip({
   updateStepTitle,
   updateStepWidth,
   removeStep,
+  moveStep,
 }: {
   step: Step;
   index: number;
+  total: number;
   isCurrent: boolean;
   pending: boolean;
   taskId: string;
@@ -271,6 +300,7 @@ function StepChip({
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
   updateStepWidth: (taskId: string, stepId: string, width: number) => void;
   removeStep: (taskId: string, stepId: string) => void;
+  moveStep: (taskId: string, stepId: string, dir: -1 | 1) => void;
 }) {
   const controls = useDragControls();
   const boxRef = useRef<HTMLDivElement>(null);
@@ -313,7 +343,7 @@ function StepChip({
       dragControls={controls}
       style={width != null ? { width } : undefined}
       className={cn(
-        "glass-tight group/chip relative flex h-8 max-w-full shrink-0 items-center gap-1 rounded-[10px] pl-1 pr-3",
+        "glass-tight group/chip relative flex h-8 max-w-full items-center gap-1 rounded-[10px] pl-1 pr-3",
         width == null && "w-max",
         step.done && "opacity-70",
         isCurrent && "shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-violet)_55%,transparent)]",
@@ -330,6 +360,34 @@ function StepChip({
       >
         <GripVertical className="size-3" />
       </button>
+      <div className="flex shrink-0 flex-col">
+        <button
+          type="button"
+          aria-label="Move step up"
+          disabled={index === 0}
+          onClick={(e) => {
+            e.stopPropagation();
+            moveStep(taskId, step.id, -1);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="tap flex h-3 w-4 items-center justify-center text-subtle hover:text-fg disabled:opacity-20"
+        >
+          <ChevronUp className="size-3" />
+        </button>
+        <button
+          type="button"
+          aria-label="Move step down"
+          disabled={index === total - 1}
+          onClick={(e) => {
+            e.stopPropagation();
+            moveStep(taskId, step.id, 1);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="tap flex h-3 w-4 items-center justify-center text-subtle hover:text-fg disabled:opacity-20"
+        >
+          <ChevronDown className="size-3" />
+        </button>
+      </div>
       <StepCheck
         checked={step.done || (pending && isCurrent)}
         onToggle={() => onChipCheck(step)}

@@ -14,6 +14,7 @@ export type Task = {
   steps: Step[];
   createdAt: number;
   updatedAt: number;
+  archivedAt?: number;
 };
 
 export type WidgetKind = "timer" | "links" | "today" | "shortcuts" | "activity";
