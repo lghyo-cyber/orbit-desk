@@ -1,6 +1,30 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MeasuringStrategy,
+  PointerSensor,
+  closestCorners,
+  pointerWithin,
+  rectIntersection,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
 import { currentStep, isArchived, stepsFinished, useOrbitStore } from "@/lib/store";
@@ -263,36 +287,14 @@ export function TaskCard({
   );
 }
 
-function insertIndexAtPoint(
-  board: HTMLElement,
-  x: number,
-  y: number,
-  dragId: string,
-  order: string[],
-): number {
-  const rest = order.filter((id) => id !== dragId);
-  if (rest.length === 0) return 0;
-  let best = 0;
-  let bestScore = Infinity;
-  let after = false;
-  for (let i = 0; i < rest.length; i++) {
-    const id = rest[i];
-    if (!id) continue;
-    const el = board.querySelector(`[data-step-id="${CSS.escape(id)}"]`);
-    if (!(el instanceof HTMLElement)) continue;
-    const r = el.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    const dx = x - cx;
-    const dy = y - cy;
-    const score = dx * dx + dy * dy;
-    if (score < bestScore) {
-      bestScore = score;
-      best = i;
-      after = Math.abs(dx) >= Math.abs(dy) ? dx > 0 : dy > 0;
-    }
-  }
-  return after ? best + 1 : best;
+function collisionDetection(
+  args: Parameters<CollisionDetection>[0],
+): ReturnType<CollisionDetection> {
+  const pointerHits = pointerWithin(args);
+  if (pointerHits.length > 0) return pointerHits;
+  const intersections = rectIntersection(args);
+  if (intersections.length > 0) return intersections;
+  return closestCorners(args);
 }
 
 function StepBoard({
@@ -316,93 +318,102 @@ function StepBoard({
   removeStep: (taskId: string, stepId: string) => void;
   reorderSteps: (taskId: string, orderedIds: string[]) => void;
 }) {
-  const boardRef = useRef<HTMLDivElement>(null);
-  const orderRef = useRef(steps.map((s) => s.id));
-  orderRef.current = steps.map((s) => s.id);
-  const [float, setFloat] = useState<{
-    id: string;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
-  const grab = useRef<{ id: string; ox: number; oy: number } | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [order, setOrder] = useState(() => steps.map((s) => s.id));
+  const orderRef = useRef(order);
+  orderRef.current = order;
 
   useEffect(() => {
-    function move(e: PointerEvent) {
-      const g = grab.current;
-      const board = boardRef.current;
-      if (!g || !board) return;
-      const x = e.clientX - g.ox;
-      const y = e.clientY - g.oy;
-      setFloat((f) => (f && f.id === g.id ? { ...f, x, y } : f));
-      const insert = insertIndexAtPoint(board, e.clientX, e.clientY, g.id, orderRef.current);
-      const rest = orderRef.current.filter((id) => id !== g.id);
-      const next = [...rest.slice(0, insert), g.id, ...rest.slice(insert)];
-      if (next.some((id, i) => id !== orderRef.current[i])) {
-        orderRef.current = next;
-        reorderSteps(taskId, next);
-      }
-    }
-    function up() {
-      grab.current = null;
-      setFloat(null);
-    }
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-    };
-  }, [reorderSteps, taskId]);
+    if (activeId) return;
+    setOrder(steps.map((s) => s.id));
+  }, [steps, activeId]);
 
-  const dragging = steps.find((s) => s.id === float?.id) ?? null;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const active = activeId ? (byId.get(activeId) ?? null) : null;
+
+  function moveActive(dragId: string, overId: string | number) {
+    const ids = orderRef.current;
+    const from = ids.indexOf(dragId);
+    const to = ids.indexOf(String(overId));
+    if (from < 0 || to < 0 || from === to) return;
+    const next = arrayMove(ids, from, to);
+    orderRef.current = next;
+    setOrder(next);
+  }
+
+  function onDragStart(e: DragStartEvent) {
+    setActiveId(String(e.active.id));
+  }
+
+  function onDragOver(e: DragOverEvent) {
+    if (!e.over) return;
+    moveActive(String(e.active.id), e.over.id);
+  }
+
+  function onDragEnd(e: DragEndEvent) {
+    if (e.over) moveActive(String(e.active.id), e.over.id);
+    reorderSteps(taskId, orderRef.current);
+    setActiveId(null);
+  }
+
+  function onDragCancel() {
+    setOrder(steps.map((s) => s.id));
+    setActiveId(null);
+  }
 
   return (
-    <>
-      <div ref={boardRef} className="flex flex-wrap items-start gap-1.5">
-        {steps.map((step, i) => (
-          <StepChip
-            key={step.id}
-            step={step}
-            index={i}
-            isCurrent={currentId === step.id}
-            pending={pending}
-            taskId={taskId}
-            lifted={float?.id === step.id}
-            onChipCheck={onChipCheck}
-            updateStepTitle={updateStepTitle}
-            updateStepWidth={updateStepWidth}
-            removeStep={removeStep}
-            onLift={(e, box) => {
-              const r = box.getBoundingClientRect();
-              grab.current = {
-                id: step.id,
-                ox: e.clientX - r.left,
-                oy: e.clientY - r.top,
-              };
-              setFloat({ id: step.id, x: r.left, y: r.top, w: r.width, h: r.height });
-            }}
-          />
-        ))}
-      </div>
-      {float && dragging ? (
-        <div
-          aria-hidden
-          style={{
-            width: float.w,
-            height: float.h,
-            transform: `translate3d(${float.x}px, ${float.y}px, 0)`,
-          }}
-          className="pointer-events-none fixed top-0 left-0 z-50 flex items-center gap-1 rounded-[10px] bg-elevated/92 px-2 shadow-glass backdrop-blur-md"
-        >
-          <GripVertical className="size-3 text-subtle" />
-          <span className="truncate text-ui text-fg">{dragging.title || "Step"}</span>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDragCancel={onDragCancel}
+    >
+      <SortableContext items={order} strategy={rectSortingStrategy}>
+        <div className="flex flex-wrap items-start gap-1.5">
+          {order.map((id, i) => {
+            const step = byId.get(id);
+            if (!step) return null;
+            return (
+              <StepChip
+                key={step.id}
+                step={step}
+                index={i}
+                isCurrent={currentId === step.id}
+                pending={pending}
+                taskId={taskId}
+                onChipCheck={onChipCheck}
+                updateStepTitle={updateStepTitle}
+                updateStepWidth={updateStepWidth}
+                removeStep={removeStep}
+              />
+            );
+          })}
         </div>
-      ) : null}
-    </>
+      </SortableContext>
+      <DragOverlay dropAnimation={null}>
+        {active ? <ChipGhost step={active} /> : null}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+function ChipGhost({ step }: { step: Step }) {
+  return (
+    <div
+      className="glass-tight flex h-8 max-w-full items-center gap-1 rounded-[10px] px-2 shadow-glass"
+      style={step.width != null ? { width: step.width } : undefined}
+    >
+      <GripVertical className="size-3 text-subtle" />
+      <span className="truncate text-ui text-fg">{step.title || "Step"}</span>
+    </div>
   );
 }
 
@@ -412,80 +423,88 @@ function StepChip({
   isCurrent,
   pending,
   taskId,
-  lifted,
   onChipCheck,
   updateStepTitle,
   updateStepWidth,
   removeStep,
-  onLift,
 }: {
   step: Step;
   index: number;
   isCurrent: boolean;
   pending: boolean;
   taskId: string;
-  lifted: boolean;
   onChipCheck: (step: Step) => void;
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
   updateStepWidth: (taskId: string, stepId: string, width: number) => void;
   removeStep: (taskId: string, stepId: string) => void;
-  onLift: (e: ReactPointerEvent<HTMLButtonElement>, box: HTMLDivElement) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number | null>(step.width ?? null);
   const widthRef = useRef<number | null>(width);
-  const drag = useRef<{ x: number; w: number } | null>(null);
+  const resize = useRef<{ x: number; w: number } | null>(null);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: step.id,
+  });
 
   useEffect(() => {
     setWidth(step.width ?? null);
     widthRef.current = step.width ?? null;
   }, [step.width]);
 
+  function setRefs(node: HTMLDivElement | null) {
+    boxRef.current = node;
+    setNodeRef(node);
+  }
+
   function onResizeStart(e: ReactPointerEvent<HTMLButtonElement>) {
     e.stopPropagation();
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     const w = boxRef.current?.getBoundingClientRect().width ?? 180;
-    drag.current = { x: e.clientX, w };
+    resize.current = { x: e.clientX, w };
     widthRef.current = w;
     setWidth(w);
   }
   function onResizeMove(e: ReactPointerEvent<HTMLButtonElement>) {
-    if (!drag.current) return;
-    const next = Math.min(720, Math.max(160, drag.current.w + (e.clientX - drag.current.x)));
+    if (!resize.current) return;
+    const next = Math.min(720, Math.max(160, resize.current.w + (e.clientX - resize.current.x)));
     widthRef.current = next;
     setWidth(next);
   }
   function onResizeEnd() {
-    if (!drag.current) return;
-    drag.current = null;
+    if (!resize.current) return;
+    resize.current = null;
     if (widthRef.current != null) updateStepWidth(taskId, step.id, widthRef.current);
   }
 
   return (
-    <motion.div
-      layout
+    <div
+      ref={setRefs}
       data-step-id={step.id}
-      ref={boxRef}
-      style={width != null ? { width } : undefined}
+      style={{
+        width: width ?? undefined,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 20 : undefined,
+      }}
       className={cn(
         "glass-tight group/chip relative flex h-8 max-w-full items-center gap-1 rounded-[10px] pl-1 pr-3",
         width == null && "w-max",
         step.done && "opacity-70",
         isCurrent && "shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-violet)_55%,transparent)]",
-        lifted && "opacity-30",
+        isDragging && "opacity-30",
       )}
-      transition={{ type: "spring", duration: 0.28, bounce: 0 }}
     >
       <button
         type="button"
         aria-label="Drag to reorder"
+        className="tap flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-subtle hover:text-fg active:cursor-grabbing"
+        {...attributes}
+        {...listeners}
         onPointerDown={(e) => {
           e.stopPropagation();
-          e.preventDefault();
-          if (boxRef.current) onLift(e, boxRef.current);
+          listeners?.onPointerDown?.(e);
         }}
-        className="tap flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-subtle hover:text-fg active:cursor-grabbing"
       >
         <GripVertical className="size-3" />
       </button>
@@ -527,7 +546,7 @@ function StepChip({
         onPointerCancel={onResizeEnd}
         className="absolute top-1 right-0 h-6 w-1.5 cursor-ew-resize rounded-full bg-fg/30 hover:bg-fg/60"
       />
-    </motion.div>
+    </div>
   );
 }
 
