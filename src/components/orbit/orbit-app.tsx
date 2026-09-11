@@ -61,8 +61,6 @@ function Desk() {
     });
   }, [tasks, filter, today]);
 
-  const todayCols = visible.length <= 1 ? 1 : 2;
-
   useEffect(() => {
     function onToggle() {
       setToday((v) => !v);
@@ -206,28 +204,13 @@ function Desk() {
                   window.dispatchEvent(new CustomEvent("orbit:focus-title", { detail: id }));
                 }}
               />
-            ) : today ? (
-              <div
-                className={cn(
-                  "grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1",
-                  todayCols === 1 ? "grid-cols-1" : "grid-cols-2",
-                  "auto-rows-72",
-                )}
-              >
-                {visible.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    selected={task.id === selectedTaskId}
-                    fill
-                  />
-                ))}
-              </div>
             ) : (
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {visible.map((task) => (
-                  <TaskCard key={task.id} task={task} selected={task.id === selectedTaskId} />
-                ))}
+              <div className="glass min-h-0 flex-1 overflow-y-auto rounded-2xl px-5 py-6">
+                <div className="flex flex-col gap-8">
+                  {visible.map((task) => (
+                    <TaskCard key={task.id} task={task} selected={task.id === selectedTaskId} />
+                  ))}
+                </div>
               </div>
             )}
           </section>

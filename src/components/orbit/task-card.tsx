@@ -25,7 +25,6 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AnimatePresence, motion } from "motion/react";
 import { Check, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
 import { currentStep, isArchived, stepsFinished, useOrbitStore } from "@/lib/store";
 import type { Step, Task } from "@/lib/types";
@@ -34,11 +33,9 @@ import { cn } from "@/lib/utils";
 export function TaskCard({
   task,
   selected,
-  fill,
 }: {
   task: Task;
   selected: boolean;
-  fill?: boolean;
 }) {
   const selectTask = useOrbitStore((s) => s.selectTask);
   const updateTask = useOrbitStore((s) => s.updateTask);
@@ -57,10 +54,8 @@ export function TaskCard({
   const timerRunning = useOrbitStore((s) => s.timer.running);
 
   const titleRef = useRef<HTMLInputElement>(null);
-  const addRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
-  const [dir, setDir] = useState(1);
 
   const current = currentStep(task);
   const finished = stepsFinished(task);
@@ -82,7 +77,6 @@ export function TaskCard({
 
   function advance() {
     if (!current || pending) return;
-    setDir(1);
     setPending(true);
     window.setTimeout(() => {
       completeCurrentStep(task.id);
@@ -92,7 +86,6 @@ export function TaskCard({
 
   function onChipCheck(step: Step) {
     if (step.done) {
-      setDir(-1);
       uncompleteStep(task.id, step.id);
       return;
     }
@@ -104,147 +97,75 @@ export function TaskCard({
     if (!title) return;
     addStep(task.id, title);
     setDraft("");
-    requestAnimationFrame(() => addRef.current?.focus());
   }
 
   return (
     <article
       onClick={() => selectTask(task.id)}
       className={cn(
-        "glass group relative rounded-2xl p-4 transition-shadow duration-150",
-        selected ? "shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-violet)_55%,transparent)]" : "hover:shadow-border-hover",
-        focused && "orbit-ring-pulse",
-        archived && "opacity-80",
-        fill && "flex h-full min-h-0 flex-col overflow-hidden",
+        "group relative",
+        selected && "rounded-xl bg-fg/[0.03]",
+        focused && "orbit-ring-pulse rounded-xl",
+        archived && "opacity-70",
       )}
     >
-      <div className="mb-3 flex items-start gap-3 pr-14">
+      <div className="flex items-start gap-3 px-1 py-1">
+        <TopicDot
+          filled={archived}
+          active={selected && !archived}
+          ready={finished && !archived}
+        />
         <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-center gap-2 text-micro font-medium tracking-wider text-subtle uppercase">
-            <span className="tabular-nums">ORB-{task.number}</span>
-            <span className="size-0.5 shrink-0 rounded-full bg-subtle" />
-            <span className="truncate">{task.owner}</span>
-            {archived ? (
-              <span className="rounded-full bg-lime/15 px-1.5 py-px text-lime normal-case tracking-normal">
-                Done
-              </span>
-            ) : finished ? (
-              <span className="rounded-full bg-violet/18 px-1.5 py-px text-violet normal-case tracking-normal">
-                Ready
-              </span>
-            ) : task.steps.length > 0 ? (
-              <span className="tabular-nums normal-case tracking-normal text-muted">
-                {doneCount}/{task.steps.length}
-              </span>
-            ) : (
-              <span className="normal-case tracking-normal text-subtle">No steps yet</span>
-            )}
+          <div className="flex items-center gap-2">
+            <input
+              ref={titleRef}
+              value={task.title}
+              placeholder="Task title"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => updateTask(task.id, { title: e.target.value })}
+              className="min-w-0 flex-1 bg-transparent text-base font-medium tracking-tight text-fg outline-none placeholder:text-subtle"
+            />
+            <span className="hidden text-micro tabular-nums text-subtle sm:inline">
+              {task.steps.length > 0 ? `${doneCount}/${task.steps.length}` : ""}
+            </span>
+            <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <button
+                type="button"
+                aria-label="Focus timer on this task"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTimerTask(task.id);
+                }}
+                className="tap flex size-7 items-center justify-center rounded-md text-muted hover:bg-fg/6 hover:text-fg"
+              >
+                <Timer className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                aria-label="Delete task"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeTask(task.id);
+                }}
+                className="tap flex size-7 items-center justify-center rounded-md text-muted hover:bg-fg/6 hover:text-danger"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
           </div>
-          <input
-            ref={titleRef}
-            value={task.title}
-            placeholder="Task title"
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => updateTask(task.id, { title: e.target.value })}
-            className="w-full bg-transparent text-base font-medium tracking-tight text-fg outline-none placeholder:text-subtle"
-          />
-        </div>
-        <div className="absolute top-3 right-3 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            aria-label="Focus timer on this task"
-            onClick={(e) => {
-              e.stopPropagation();
-              setTimerTask(task.id);
-            }}
-            className="tap flex size-7 items-center justify-center rounded-md text-muted hover:bg-fg/6 hover:text-fg"
-          >
-            <Timer className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Delete task"
-            onClick={(e) => {
-              e.stopPropagation();
-              removeTask(task.id);
-            }}
-            className="tap flex size-7 items-center justify-center rounded-md text-muted hover:bg-fg/6 hover:text-danger"
-          >
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
-      </div>
 
-      <SegmentBar steps={task.steps} currentId={current?.id} />
+          <div className="mt-1 flex items-center gap-2">
+            <Wave className="w-12 shrink-0 text-muted" />
+            <input
+              value={task.notes}
+              placeholder="Notes"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => updateTask(task.id, { notes: e.target.value })}
+              className="min-w-0 flex-1 bg-transparent text-ui text-muted outline-none placeholder:text-subtle"
+            />
+          </div>
 
-      <div className="mt-3 overflow-hidden">
-        <AnimatePresence mode="wait" initial={false} custom={dir}>
-          <motion.div
-            key={pending && current ? `${current.id}-pending` : (current?.id ?? (archived ? "done" : finished ? "ready" : "empty"))}
-            custom={dir}
-            initial={{ x: dir * 36, opacity: 0, filter: "blur(4px)" }}
-            animate={{ x: 0, opacity: 1, filter: "blur(0px)" }}
-            exit={{ x: dir * -36, opacity: 0, filter: "blur(4px)" }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            className="flex items-center gap-3"
-          >
-            {archived ? (
-              <>
-                <StepCheck
-                  checked
-                  onToggle={() => unarchiveTask(task.id)}
-                  accent
-                  label="Move back to Active"
-                />
-                <div>
-                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Done</p>
-                  <p className="text-ui text-fg">All steps finished</p>
-                </div>
-              </>
-            ) : finished ? (
-              <>
-                <StepCheck
-                  checked={false}
-                  onToggle={() => archiveTask(task.id)}
-                  accent
-                  label="Move to Done"
-                />
-                <div>
-                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Move to Done?</p>
-                  <p className="text-ui text-fg">Check to file this task</p>
-                </div>
-              </>
-            ) : current ? (
-              <>
-                <StepCheck
-                  checked={pending}
-                  onToggle={advance}
-                  accent
-                  label={`Complete ${current.title}`}
-                />
-                <div className="min-w-0">
-                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Current step</p>
-                  <p className="truncate text-base font-medium text-fg">{current.title}</p>
-                </div>
-              </>
-            ) : (
-              <>
-                <span className="flex size-9 items-center justify-center rounded-xl bg-fg/6 text-muted">
-                  <Plus className="size-4" />
-                </span>
-                <div>
-                  <p className="text-micro font-medium tracking-wider text-subtle uppercase">Next</p>
-                  <p className="text-ui text-muted">Add a step, then check it off to advance</p>
-                </div>
-              </>
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
-      {selected && (
-        <div className={cn("mt-3 border-t border-border pt-3", fill && "min-h-0 flex-1 overflow-y-auto")}>
-          <div className="flex flex-col gap-1.5">
+          <div className="mt-2.5 flex flex-col gap-1.5">
             <StepBoard
               taskId={task.id}
               steps={task.steps}
@@ -262,28 +183,84 @@ export function TaskCard({
                 commitAdd();
               }}
               onClick={(e) => e.stopPropagation()}
-              className="flex min-h-16 min-w-56 flex-1 items-start gap-1.5 rounded-[10px] bg-fg/4 px-2 py-1.5 shadow-[0_0_0_1px_rgb(255_255_255/0.06)]"
+              className="flex h-8 min-w-28 max-w-56 items-center gap-1.5 rounded-[10px] bg-fg/4 px-2 shadow-[0_0_0_1px_rgb(255_255_255/0.06)]"
             >
-              <Plus className="mt-1 size-3.5 shrink-0 text-subtle" />
-              <textarea
-                ref={addRef}
-                rows={3}
+              <Plus className="size-3 shrink-0 text-subtle" />
+              <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    commitAdd();
-                  }
-                }}
-                placeholder={task.steps.length === 0 ? "Step 1, then Enter…" : `Step ${task.steps.length + 1}, then Enter`}
-                className="min-h-12 w-full resize-y bg-transparent text-ui leading-relaxed text-fg outline-none placeholder:text-subtle"
+                placeholder={task.steps.length === 0 ? "Step 1" : `Step ${task.steps.length + 1}`}
+                className="w-full bg-transparent text-ui text-fg outline-none placeholder:text-subtle"
               />
             </form>
           </div>
+
+          {finished && !archived && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                archiveTask(task.id);
+              }}
+              className="tap mt-2 flex items-center gap-2 text-ui text-violet hover:text-fg"
+            >
+              <StepCheck checked={false} onToggle={() => archiveTask(task.id)} accent label="Move to Done" />
+              Move to Done
+            </button>
+          )}
+          {archived && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                unarchiveTask(task.id);
+              }}
+              className="tap mt-2 text-ui text-muted hover:text-fg"
+            >
+              Restore
+            </button>
+          )}
         </div>
-      )}
+      </div>
     </article>
+  );
+}
+
+function TopicDot({
+  filled,
+  active,
+  ready,
+}: {
+  filled: boolean;
+  active: boolean;
+  ready: boolean;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "mt-1 flex size-5 shrink-0 items-center justify-center rounded-full",
+        "shadow-[0_0_0_1.5px_rgb(255_255_255/0.45)]",
+        filled && "bg-lime shadow-[0_0_0_1.5px_var(--color-lime)]",
+        ready && "shadow-[0_0_0_1.5px_var(--color-violet)]",
+      )}
+    >
+      {active && !filled ? <span className="size-1.5 rounded-full bg-violet" /> : null}
+    </span>
+  );
+}
+
+function Wave({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 10" className={className} aria-hidden>
+      <path
+        d="M1 5 Q 5 1 9 5 T 17 5 T 25 5 T 33 5 T 41 5 T 47 5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
@@ -546,25 +523,6 @@ function StepChip({
         onPointerCancel={onResizeEnd}
         className="absolute top-1 right-0 h-6 w-1.5 cursor-ew-resize rounded-full bg-fg/30 hover:bg-fg/60"
       />
-    </div>
-  );
-}
-
-function SegmentBar({ steps, currentId }: { steps: Step[]; currentId?: string }) {
-  if (steps.length === 0) {
-    return <div className="h-0.5 w-full rounded-full bg-fg/8" />;
-  }
-  return (
-    <div className="flex gap-1">
-      {steps.map((s) => (
-        <div
-          key={s.id}
-          className={cn(
-            "h-0.5 flex-1 rounded-full transition-colors duration-300",
-            s.done ? "bg-lime" : s.id === currentId ? "bg-violet" : "bg-fg/10",
-          )}
-        />
-      ))}
     </div>
   );
 }
