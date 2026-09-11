@@ -2,162 +2,82 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import { SEED_EVENTS, SEED_LINKS, SEED_TASKS, SEED_WIDGETS } from "./seed";
-import type {
-  ActivityEvent,
-  FilterId,
-  QuickLink,
-  Task,
-  TimerState,
-  WidgetKind,
-} from "./types";
-import { uid, markFrom, normalizeHref } from "./utils";
+import { SEED_TOPICS } from "./seed";
+import type { Step, Topic } from "./types";
+import { uid } from "./utils";
 
-export type OrbitState = {
-  tasks: Task[];
-  events: ActivityEvent[];
-  links: QuickLink[];
-  enabledWidgets: WidgetKind[];
-  selectedTaskId: string | null;
-  filter: FilterId;
-  timer: TimerState;
-  nextNumber: number;
+export function currentStep(topic: Topic): Step | null {
+  return topic.steps.find((s) => !s.done) ?? null;
+}
 
-  selectTask: (id: string | null) => void;
-  setFilter: (filter: FilterId) => void;
+export function isFinished(topic: Topic): boolean {
+  return topic.steps.length > 0 && topic.steps.every((s) => s.done);
+}
 
-  addTask: (title?: string) => string;
-  updateTask: (id: string, patch: Partial<Pick<Task, "title" | "notes" | "owner">>) => void;
-  removeTask: (id: string) => void;
-
-  addStep: (taskId: string, title: string) => void;
-  updateStepTitle: (taskId: string, stepId: string, title: string) => void;
-  updateStepWidth: (taskId: string, stepId: string, width: number) => void;
-  removeStep: (taskId: string, stepId: string) => void;
-  reorderSteps: (taskId: string, orderedIds: string[]) => void;
-  completeCurrentStep: (taskId: string) => void;
-  uncompleteStep: (taskId: string, stepId: string) => void;
-  moveStep: (taskId: string, stepId: string, dir: -1 | 1) => void;
-  archiveTask: (taskId: string) => void;
-  unarchiveTask: (taskId: string) => void;
-  advanceTask: (taskId: string) => void;
-
-  toggleWidget: (kind: WidgetKind, on: boolean) => void;
-  moveWidget: (kind: WidgetKind, dir: -1 | 1) => void;
-
-  addLink: (label: string, href: string) => void;
-  updateLink: (id: string, patch: Partial<Pick<QuickLink, "label" | "href">>) => void;
-  removeLink: (id: string) => void;
-
-  setTimerTask: (taskId: string | null) => void;
-  setTimerMinutes: (minutes: number) => void;
-  startTimer: () => void;
-  pauseTimer: () => void;
-  resetTimer: () => void;
-  finishTimer: () => void;
+type PadState = {
+  topics: Topic[];
+  selectedId: string | null;
+  select: (id: string | null) => void;
+  addTopic: () => string;
+  updateTopic: (id: string, patch: Partial<Pick<Topic, "title" | "notes">>) => void;
+  removeTopic: (id: string) => void;
+  addStep: (topicId: string, title: string) => void;
+  updateStep: (topicId: string, stepId: string, title: string) => void;
+  removeStep: (topicId: string, stepId: string) => void;
+  completeCurrent: (topicId: string) => void;
+  uncompleteStep: (topicId: string, stepId: string) => void;
 };
 
-function touch(task: Task): Task {
-  return { ...task, updatedAt: Date.now() };
+function touch(topic: Topic): Topic {
+  return { ...topic, updatedAt: Date.now() };
 }
 
-function currentStep(task: Task) {
-  return task.steps.find((s) => !s.done) ?? null;
-}
-
-function stepsFinished(task: Task) {
-  return task.steps.length > 0 && task.steps.every((s) => s.done);
-}
-
-function isArchived(task: Task) {
-  return Boolean(task.archivedAt);
-}
-
-/** Task is in the Done tab only after the user confirms Move to Done. */
-function isComplete(task: Task) {
-  return isArchived(task);
-}
-
-export { currentStep, isComplete, isArchived, stepsFinished };
-
-export const useOrbitStore = create<OrbitState>()(
+export const usePadStore = create<PadState>()(
   persist(
     (set, get) => ({
-      tasks: SEED_TASKS,
-      events: SEED_EVENTS,
-      links: SEED_LINKS,
-      enabledWidgets: SEED_WIDGETS,
-      selectedTaskId: "orb-14",
-      filter: "active",
-      nextNumber: 23,
-      timer: {
-        taskId: "orb-14",
-        durationSec: 25 * 60,
-        remainingSec: 25 * 60,
-        running: false,
-        endsAt: null,
-      },
-
-      selectTask: (id) => set({ selectedTaskId: id }),
-      setFilter: (filter) => set({ filter }),
-
-      addTask: (title = "") => {
-        const id = uid("orb");
-        const number = get().nextNumber;
-        const task: Task = {
+      topics: SEED_TOPICS,
+      selectedId: "t-onboard",
+      select: (id) => set({ selectedId: id }),
+      addTopic: () => {
+        const id = uid("t");
+        const topic: Topic = {
           id,
-          number,
-          title,
+          title: "",
           notes: "",
-          owner: "LG",
           steps: [],
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
-        set((s) => ({
-          tasks: [task, ...s.tasks],
-          selectedTaskId: id,
-          nextNumber: number + 1,
-          filter: "active",
-          timer: s.timer.taskId ? s.timer : { ...s.timer, taskId: id },
-        }));
+        set((s) => ({ topics: [...s.topics, topic], selectedId: id }));
         return id;
       },
-
-      updateTask: (id, patch) =>
+      updateTopic: (id, patch) =>
         set((s) => ({
-          tasks: s.tasks.map((t) => (t.id === id ? touch({ ...t, ...patch }) : t)),
+          topics: s.topics.map((t) => (t.id === id ? touch({ ...t, ...patch }) : t)),
         })),
-
-      removeTask: (id) =>
+      removeTopic: (id) =>
         set((s) => ({
-          tasks: s.tasks.filter((t) => t.id !== id),
-          selectedTaskId: s.selectedTaskId === id ? null : s.selectedTaskId,
-          timer:
-            s.timer.taskId === id
-              ? { ...s.timer, taskId: null, running: false, endsAt: null }
-              : s.timer,
+          topics: s.topics.filter((t) => t.id !== id),
+          selectedId: s.selectedId === id ? null : s.selectedId,
         })),
-
-      addStep: (taskId, title) => {
+      addStep: (topicId, title) => {
         const trimmed = title.trim();
         if (!trimmed) return;
         set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId
+          topics: s.topics.map((t) =>
+            t.id === topicId
               ? touch({
                   ...t,
-                  steps: [...t.steps, { id: uid("st"), title: trimmed, done: false }],
+                  steps: [...t.steps, { id: uid("s"), title: trimmed, done: false }],
                 })
               : t,
           ),
         }));
       },
-
-      updateStepTitle: (taskId, stepId, title) =>
+      updateStep: (topicId, stepId, title) =>
         set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId
+          topics: s.topics.map((t) =>
+            t.id === topicId
               ? touch({
                   ...t,
                   steps: t.steps.map((st) => (st.id === stepId ? { ...st, title } : st)),
@@ -165,244 +85,43 @@ export const useOrbitStore = create<OrbitState>()(
               : t,
           ),
         })),
-
-      updateStepWidth: (taskId, stepId, width) =>
+      removeStep: (topicId, stepId) =>
         set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId
-              ? {
-                  ...t,
-                  steps: t.steps.map((st) =>
-                    st.id === stepId ? { ...st, width: Math.round(width) } : st,
-                  ),
-                }
-              : t,
+          topics: s.topics.map((t) =>
+            t.id === topicId ? touch({ ...t, steps: t.steps.filter((st) => st.id !== stepId) }) : t,
           ),
         })),
-
-      removeStep: (taskId, stepId) =>
-        set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId
-              ? touch({ ...t, steps: t.steps.filter((st) => st.id !== stepId) })
-              : t,
-          ),
-        })),
-
-      reorderSteps: (taskId, orderedIds) =>
-        set((s) => ({
-          tasks: s.tasks.map((t) => {
-            if (t.id !== taskId) return t;
-            const map = new Map(t.steps.map((st) => [st.id, st]));
-            const next = orderedIds
-              .map((id) => map.get(id))
-              .filter((st): st is NonNullable<typeof st> => Boolean(st));
-            for (const st of t.steps) {
-              if (!orderedIds.includes(st.id)) next.push(st);
-            }
-            return touch({ ...t, steps: next });
-          }),
-        })),
-
-      moveStep: (taskId, stepId, dir) =>
-        set((s) => ({
-          tasks: s.tasks.map((t) => {
-            if (t.id !== taskId) return t;
-            const i = t.steps.findIndex((st) => st.id === stepId);
-            const j = i + dir;
-            if (i < 0 || j < 0 || j >= t.steps.length) return t;
-            const next = [...t.steps];
-            const a = next[i];
-            const b = next[j];
-            if (!a || !b) return t;
-            next[i] = b;
-            next[j] = a;
-            return touch({ ...t, steps: next });
-          }),
-        })),
-
-      completeCurrentStep: (taskId) => {
-        const task = get().tasks.find((t) => t.id === taskId);
-        if (!task) return;
-        const step = currentStep(task);
+      completeCurrent: (topicId) => {
+        const topic = get().topics.find((t) => t.id === topicId);
+        const step = topic ? currentStep(topic) : null;
         if (!step) return;
-        const event: ActivityEvent = {
-          id: uid("ev"),
-          taskId,
-          taskTitle: task.title || "Untitled",
-          stepTitle: step.title,
-          at: Date.now(),
-        };
         set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId
+          topics: s.topics.map((t) =>
+            t.id === topicId
               ? touch({
                   ...t,
                   steps: t.steps.map((st) => (st.id === step.id ? { ...st, done: true } : st)),
                 })
               : t,
           ),
-          events: [event, ...s.events].slice(0, 40),
         }));
       },
-
-      uncompleteStep: (taskId, stepId) =>
+      uncompleteStep: (topicId, stepId) =>
         set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId
+          topics: s.topics.map((t) =>
+            t.id === topicId
               ? touch({
                   ...t,
-                  archivedAt: undefined,
                   steps: t.steps.map((st) => (st.id === stepId ? { ...st, done: false } : st)),
                 })
               : t,
           ),
         })),
-
-      archiveTask: (taskId) =>
-        set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId && stepsFinished(t) && !t.archivedAt
-              ? touch({ ...t, archivedAt: Date.now() })
-              : t,
-          ),
-        })),
-
-      unarchiveTask: (taskId) =>
-        set((s) => ({
-          tasks: s.tasks.map((t) =>
-            t.id === taskId ? touch({ ...t, archivedAt: undefined }) : t,
-          ),
-        })),
-
-      advanceTask: (taskId) => {
-        const task = get().tasks.find((t) => t.id === taskId);
-        if (!task) return;
-        if (currentStep(task)) {
-          get().completeCurrentStep(taskId);
-          return;
-        }
-        if (stepsFinished(task) && !task.archivedAt) get().archiveTask(taskId);
-      },
-
-      toggleWidget: (kind, on) =>
-        set((s) => {
-          const has = s.enabledWidgets.includes(kind);
-          if (on && !has) return { enabledWidgets: [...s.enabledWidgets, kind] };
-          if (!on && has) return { enabledWidgets: s.enabledWidgets.filter((k) => k !== kind) };
-          return s;
-        }),
-
-      moveWidget: (kind, dir) =>
-        set((s) => {
-          const i = s.enabledWidgets.indexOf(kind);
-          if (i < 0) return s;
-          const j = i + dir;
-          if (j < 0 || j >= s.enabledWidgets.length) return s;
-          const next = [...s.enabledWidgets];
-          const a = next[i];
-          const b = next[j];
-          if (!a || !b) return s;
-          next[i] = b;
-          next[j] = a;
-          return { enabledWidgets: next };
-        }),
-
-      addLink: (label, href) => {
-        const l = label.trim();
-        const h = normalizeHref(href);
-        if (!l || !h) return;
-        const link: QuickLink = {
-          id: uid("lk"),
-          label: l,
-          href: h,
-          mark: markFrom(l),
-        };
-        set((s) => ({ links: [...s.links, link] }));
-      },
-
-      updateLink: (id, patch) =>
-        set((s) => ({
-          links: s.links.map((lk) => {
-            if (lk.id !== id) return lk;
-            const label = patch.label !== undefined ? patch.label.trim() || lk.label : lk.label;
-            const href = patch.href !== undefined ? normalizeHref(patch.href) || lk.href : lk.href;
-            return { ...lk, label, href, mark: markFrom(label) };
-          }),
-        })),
-
-      removeLink: (id) => set((s) => ({ links: s.links.filter((lk) => lk.id !== id) })),
-
-      setTimerTask: (taskId) =>
-        set((s) => ({
-          timer: { ...s.timer, taskId },
-          selectedTaskId: taskId ?? s.selectedTaskId,
-        })),
-
-      setTimerMinutes: (minutes) => {
-        const durationSec = Math.min(60, Math.max(1, Math.round(minutes))) * 60;
-        set((s) => ({
-          timer: {
-            ...s.timer,
-            durationSec,
-            remainingSec: s.timer.running ? s.timer.remainingSec : durationSec,
-            running: false,
-            endsAt: null,
-          },
-        }));
-      },
-
-      startTimer: () => {
-        const { timer, selectedTaskId } = get();
-        const taskId = timer.taskId ?? selectedTaskId;
-        const remaining = timer.remainingSec > 0 ? timer.remainingSec : timer.durationSec;
-        set({
-          timer: {
-            ...timer,
-            taskId,
-            remainingSec: remaining,
-            running: remaining > 0,
-            endsAt: remaining > 0 ? Date.now() + remaining * 1000 : null,
-          },
-        });
-      },
-
-      pauseTimer: () =>
-        set((s) => {
-          const remaining =
-            s.timer.running && s.timer.endsAt
-              ? Math.max(0, Math.round((s.timer.endsAt - Date.now()) / 1000))
-              : s.timer.remainingSec;
-          return {
-            timer: { ...s.timer, running: false, remainingSec: remaining, endsAt: null },
-          };
-        }),
-
-      resetTimer: () =>
-        set((s) => ({
-          timer: {
-            ...s.timer,
-            running: false,
-            remainingSec: s.timer.durationSec,
-            endsAt: null,
-          },
-        })),
-
-      finishTimer: () =>
-        set((s) => ({
-          timer: {
-            ...s.timer,
-            running: false,
-            remainingSec: 0,
-            endsAt: null,
-          },
-        })),
     }),
     {
-      name: "orbit-desk-v1",
+      name: "pad-sheet-v1",
       storage: createJSONStorage(() => localStorage),
       skipHydration: true,
-      version: 1,
     },
   ),
 );
