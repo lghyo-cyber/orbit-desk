@@ -29,6 +29,7 @@ export type OrbitState = {
   addTask: (title?: string) => string;
   updateTask: (id: string, patch: Partial<Pick<Task, "title" | "notes" | "owner">>) => void;
   removeTask: (id: string) => void;
+  reorderTasks: (orderedIds: string[]) => void;
 
   addStep: (taskId: string, title: string) => void;
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
@@ -138,6 +139,19 @@ export const useOrbitStore = create<OrbitState>()(
               ? { ...s.timer, taskId: null, running: false, endsAt: null }
               : s.timer,
         })),
+
+      reorderTasks: (orderedIds) =>
+        set((s) => {
+          const map = new Map(s.tasks.map((t) => [t.id, t]));
+          const inView = new Set(orderedIds);
+          const queue = [...orderedIds];
+          const next = s.tasks.map((t) => {
+            if (!inView.has(t.id)) return t;
+            const id = queue.shift();
+            return (id ? map.get(id) : undefined) ?? t;
+          });
+          return { tasks: next };
+        }),
 
       addStep: (taskId, title) => {
         const trimmed = title.trim();
