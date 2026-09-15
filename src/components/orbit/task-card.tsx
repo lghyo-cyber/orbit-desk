@@ -1,34 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  MeasuringStrategy,
-  PointerSensor,
-  closestCorners,
-  pointerWithin,
-  rectIntersection,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-  type DragEndEvent,
-  type DragOverEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  arrayMove,
-  rectSortingStrategy,
-  sortableKeyboardCoordinates,
-  useSortable,
-} from "@dnd-kit/sortable";
+import { SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, Plus, Timer, Trash2, X } from "lucide-react";
 import { currentStep, isArchived, stepsFinished, useOrbitStore } from "@/lib/store";
 import type { Step, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const noShift = () => null;
 
 export function TaskCard({
   task,
@@ -48,7 +28,6 @@ export function TaskCard({
   const updateStepTitle = useOrbitStore((s) => s.updateStepTitle);
   const updateStepWidth = useOrbitStore((s) => s.updateStepWidth);
   const removeStep = useOrbitStore((s) => s.removeStep);
-  const reorderSteps = useOrbitStore((s) => s.reorderSteps);
   const setTimerTask = useOrbitStore((s) => s.setTimerTask);
   const timerTaskId = useOrbitStore((s) => s.timer.taskId);
   const timerRunning = useOrbitStore((s) => s.timer.running);
@@ -56,6 +35,20 @@ export function TaskCard({
   const titleRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
+  const {
+    attributes: taskDrag,
+    listeners: taskListeners,
+    setNodeRef: setTaskRef,
+    setActivatorNodeRef: setTaskHandle,
+    transform: taskTransform,
+    transition: taskTransition,
+    isDragging: taskDragging,
+    isOver: taskOver,
+  } = useSortable({
+    id: task.id,
+    data: { kind: "task" as const },
+    animateLayoutChanges: () => false,
+  });
 
   const current = currentStep(task);
   const finished = stepsFinished(task);
@@ -101,15 +94,39 @@ export function TaskCard({
 
   return (
     <article
+      ref={setTaskRef}
+      data-task-id={task.id}
       onClick={() => selectTask(task.id)}
+      style={{
+        transform: CSS.Transform.toString(taskTransform),
+        transition: taskTransition,
+        opacity: taskDragging ? 0.55 : undefined,
+      }}
       className={cn(
         "group relative",
         selected && "rounded-xl bg-fg/[0.03]",
         focused && "orbit-ring-pulse rounded-xl",
         archived && "opacity-70",
+        taskDragging && "z-20",
+        taskOver && !taskDragging && "rounded-xl shadow-[0_0_0_1px_var(--color-violet)]",
       )}
     >
-      <div className="flex items-start gap-3 px-1 py-1">
+      <div className="flex items-start gap-2 px-1 py-1">
+        <button
+          ref={setTaskHandle}
+          type="button"
+          data-task-handle={task.id}
+          aria-label="Drag task to reorder"
+          className="tap mt-1 flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-subtle hover:text-fg active:cursor-grabbing"
+          {...taskDrag}
+          {...taskListeners}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            taskListeners?.onPointerDown?.(e);
+          }}
+        >
+          <GripVertical className="size-3.5" />
+        </button>
         <TopicDot
           filled={archived}
           active={selected && !archived}
@@ -175,7 +192,6 @@ export function TaskCard({
               updateStepTitle={updateStepTitle}
               updateStepWidth={updateStepWidth}
               removeStep={removeStep}
-              reorderSteps={reorderSteps}
             />
             <form
               onSubmit={(e) => {
@@ -226,6 +242,18 @@ export function TaskCard({
   );
 }
 
+export function StepGhost({ step }: { step: Step }) {
+  return (
+    <div
+      className="glass-tight flex h-8 max-w-full items-center gap-1 rounded-[10px] px-2 shadow-glass"
+      style={step.width != null ? { width: step.width } : undefined}
+    >
+      <GripVertical className="size-3 text-subtle" />
+      <span className="truncate text-ui text-fg">{step.title || "Step"}</span>
+    </div>
+  );
+}
+
 function TopicDot({
   filled,
   active,
@@ -264,16 +292,6 @@ function Wave({ className }: { className?: string }) {
   );
 }
 
-function collisionDetection(
-  args: Parameters<CollisionDetection>[0],
-): ReturnType<CollisionDetection> {
-  const pointerHits = pointerWithin(args);
-  if (pointerHits.length > 0) return pointerHits;
-  const intersections = rectIntersection(args);
-  if (intersections.length > 0) return intersections;
-  return closestCorners(args);
-}
-
 function StepBoard({
   taskId,
   steps,
@@ -283,7 +301,6 @@ function StepBoard({
   updateStepTitle,
   updateStepWidth,
   removeStep,
-  reorderSteps,
 }: {
   taskId: string;
   steps: Step[];
@@ -293,104 +310,27 @@ function StepBoard({
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
   updateStepWidth: (taskId: string, stepId: string, width: number) => void;
   removeStep: (taskId: string, stepId: string) => void;
-  reorderSteps: (taskId: string, orderedIds: string[]) => void;
 }) {
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [order, setOrder] = useState(() => steps.map((s) => s.id));
-  const orderRef = useRef(order);
-  orderRef.current = order;
-
-  useEffect(() => {
-    if (activeId) return;
-    setOrder(steps.map((s) => s.id));
-  }, [steps, activeId]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const byId = new Map(steps.map((s) => [s.id, s]));
-  const active = activeId ? (byId.get(activeId) ?? null) : null;
-
-  function moveActive(dragId: string, overId: string | number) {
-    const ids = orderRef.current;
-    const from = ids.indexOf(dragId);
-    const to = ids.indexOf(String(overId));
-    if (from < 0 || to < 0 || from === to) return;
-    const next = arrayMove(ids, from, to);
-    orderRef.current = next;
-    setOrder(next);
-  }
-
-  function onDragStart(e: DragStartEvent) {
-    setActiveId(String(e.active.id));
-  }
-
-  function onDragOver(e: DragOverEvent) {
-    if (!e.over) return;
-    moveActive(String(e.active.id), e.over.id);
-  }
-
-  function onDragEnd(e: DragEndEvent) {
-    if (e.over) moveActive(String(e.active.id), e.over.id);
-    reorderSteps(taskId, orderRef.current);
-    setActiveId(null);
-  }
-
-  function onDragCancel() {
-    setOrder(steps.map((s) => s.id));
-    setActiveId(null);
-  }
-
+  const ids = steps.map((s) => s.id);
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={collisionDetection}
-      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDragEnd={onDragEnd}
-      onDragCancel={onDragCancel}
-    >
-      <SortableContext items={order} strategy={rectSortingStrategy}>
-        <div className="flex flex-wrap items-start gap-1.5">
-          {order.map((id, i) => {
-            const step = byId.get(id);
-            if (!step) return null;
-            return (
-              <StepChip
-                key={step.id}
-                step={step}
-                index={i}
-                isCurrent={currentId === step.id}
-                pending={pending}
-                taskId={taskId}
-                onChipCheck={onChipCheck}
-                updateStepTitle={updateStepTitle}
-                updateStepWidth={updateStepWidth}
-                removeStep={removeStep}
-              />
-            );
-          })}
-        </div>
-      </SortableContext>
-      <DragOverlay dropAnimation={null}>
-        {active ? <ChipGhost step={active} /> : null}
-      </DragOverlay>
-    </DndContext>
-  );
-}
-
-function ChipGhost({ step }: { step: Step }) {
-  return (
-    <div
-      className="glass-tight flex h-8 max-w-full items-center gap-1 rounded-[10px] px-2 shadow-glass"
-      style={step.width != null ? { width: step.width } : undefined}
-    >
-      <GripVertical className="size-3 text-subtle" />
-      <span className="truncate text-ui text-fg">{step.title || "Step"}</span>
-    </div>
+    <SortableContext items={ids} strategy={noShift}>
+      <div className="flex flex-wrap items-start gap-1.5">
+        {steps.map((step, i) => (
+          <StepChip
+            key={step.id}
+            step={step}
+            index={i}
+            isCurrent={currentId === step.id}
+            pending={pending}
+            taskId={taskId}
+            onChipCheck={onChipCheck}
+            updateStepTitle={updateStepTitle}
+            updateStepWidth={updateStepWidth}
+            removeStep={removeStep}
+          />
+        ))}
+      </div>
+    </SortableContext>
   );
 }
 
@@ -419,8 +359,18 @@ function StepChip({
   const [width, setWidth] = useState<number | null>(step.width ?? null);
   const widthRef = useRef<number | null>(width);
   const resize = useRef<{ x: number; w: number } | null>(null);
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    isDragging,
+    isOver,
+  } = useSortable({
     id: step.id,
+    data: { kind: "step" as const, taskId },
+    animateLayoutChanges: () => false,
+    strategy: noShift,
   });
 
   useEffect(() => {
@@ -460,9 +410,6 @@ function StepChip({
       data-step-id={step.id}
       style={{
         width: width ?? undefined,
-        transform: CSS.Transform.toString(transform),
-        transition,
-        zIndex: isDragging ? 20 : undefined,
       }}
       className={cn(
         "glass-tight group/chip relative flex h-8 max-w-full items-center gap-1 rounded-[10px] pl-1 pr-3",
@@ -470,11 +417,14 @@ function StepChip({
         step.done && "opacity-70",
         isCurrent && "shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-violet)_55%,transparent)]",
         isDragging && "opacity-30",
+        isOver && !isDragging && "shadow-[inset_2px_0_0_0_var(--color-violet)]",
       )}
     >
       <button
+        ref={setActivatorNodeRef}
         type="button"
         aria-label="Drag to reorder"
+        data-step-handle={step.id}
         className="tap flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-subtle hover:text-fg active:cursor-grabbing"
         {...attributes}
         {...listeners}

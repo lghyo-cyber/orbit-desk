@@ -1,14 +1,28 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  MeasuringStrategy,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragStartEvent,
+  type Modifier,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, type SortingStrategy } from "@dnd-kit/sortable";
 import { Focus, LayoutGrid, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/orbit/command-palette";
-import { TaskCard } from "@/components/orbit/task-card";
+import { StepGhost, TaskCard } from "@/components/orbit/task-card";
 import { CustomizePanel, NotesPanel, TimerDock, WidgetColumn } from "@/components/orbit/widgets";
 import { isComplete, useOrbitStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import type { FilterId } from "@/lib/types";
+import type { FilterId, Step, Task } from "@/lib/types";
 
 export function OrbitApp() {
   const [ready, setReady] = useState(false);
@@ -45,6 +59,7 @@ function Desk() {
   const selectedTaskId = useOrbitStore((s) => s.selectedTaskId);
   const selectTask = useOrbitStore((s) => s.selectTask);
   const addTask = useOrbitStore((s) => s.addTask);
+  const reorderTasks = useOrbitStore((s) => s.reorderTasks);
   const advanceTask = useOrbitStore((s) => s.advanceTask);
   const startTimer = useOrbitStore((s) => s.startTimer);
   const pauseTimer = useOrbitStore((s) => s.pauseTimer);
@@ -206,11 +221,7 @@ function Desk() {
               />
             ) : (
               <div className="glass min-h-0 flex-1 overflow-y-auto rounded-2xl px-5 py-6">
-                <div className="flex flex-col gap-8">
-                  {visible.map((task) => (
-                    <TaskCard key={task.id} task={task} selected={task.id === selectedTaskId} />
-                  ))}
-                </div>
+                <TaskStack tasks={visible} selectedId={selectedTaskId} onReorder={reorderTasks} />
               </div>
             )}
           </section>
@@ -234,6 +245,186 @@ function Desk() {
       />
       <CustomizePanel open={customize} onClose={() => setCustomize(false)} />
     </div>
+  );
+}
+
+function sameKindContainers(args: Parameters<CollisionDetection>[0]) {
+  const kind = args.active.data.current?.kind;
+  const taskId = args.active.data.current?.taskId as string | undefined;
+  return args.droppableContainers.filter((c) => {
+    if (c.data.current?.kind !== kind) return false;
+    if (kind === "step") return c.data.current?.taskId === taskId;
+    return true;
+  });
+}
+
+function wrapStepCollision(args: Parameters<CollisionDetection>[0]) {
+  const pointer = args.pointerCoordinates;
+  if (!pointer) return closestCenter(args);
+
+  const items = args.droppableContainers
+    .map((container) => {
+      const rect = args.droppableRects.get(container.id);
+      if (!rect) return null;
+      return { container, rect };
+    })
+    .filter((item): item is { container: (typeof args.droppableContainers)[number]; rect: NonNullable<ReturnType<typeof args.droppableRects.get>> } =>
+      Boolean(item),
+    )
+    .sort((a, b) => {
+      if (Math.abs(a.rect.top - b.rect.top) > 10) return a.rect.top - b.rect.top;
+      return a.rect.left - b.rect.left;
+    });
+
+  const others = items.filter((item) => item.container.id !== args.active.id);
+  if (others.length === 0) return [];
+
+  let target = others[others.length - 1]!;
+  for (const item of others) {
+    const r = item.rect;
+    if (pointer.y < r.top) {
+      target = item;
+      break;
+    }
+    if (pointer.y <= r.bottom) {
+      const midX = r.left + r.width / 2;
+      if (pointer.x < midX) {
+        target = item;
+        break;
+      }
+    }
+  }
+
+  return [
+    {
+      id: target.container.id,
+      data: { droppableContainer: target.container, value: 0 },
+    },
+  ];
+}
+
+function pointerListCollision(args: Parameters<CollisionDetection>[0]) {
+  const pointer = args.pointerCoordinates;
+  if (!pointer) return closestCenter(args);
+
+  const items = args.droppableContainers
+    .map((container) => {
+      const rect = args.droppableRects.get(container.id);
+      if (!rect) return null;
+      return { container, rect };
+    })
+    .filter((item): item is { container: (typeof args.droppableContainers)[number]; rect: NonNullable<ReturnType<typeof args.droppableRects.get>> } =>
+      Boolean(item),
+    )
+    .sort((a, b) => a.rect.top - b.rect.top);
+
+  const others = items.filter((item) => item.container.id !== args.active.id);
+  if (others.length === 0) return [];
+
+  let target = others[others.length - 1]!;
+  for (const item of others) {
+    const midY = item.rect.top + item.rect.height / 2;
+    if (pointer.y < midY) {
+      target = item;
+      break;
+    }
+  }
+
+  return [
+    {
+      id: target.container.id,
+      data: { droppableContainer: target.container, value: 0 },
+    },
+  ];
+}
+
+function typedCollision(args: Parameters<CollisionDetection>[0]) {
+  const kind = args.active.data.current?.kind;
+  const next = { ...args, droppableContainers: sameKindContainers(args) };
+  if (kind === "step") return wrapStepCollision(next);
+  return pointerListCollision(next);
+}
+
+const noShift: SortingStrategy = () => null;
+
+const lockTaskToVertical: Modifier = ({ transform, active }) => {
+  if (active?.data.current?.kind === "task") return { ...transform, x: 0 };
+  return transform;
+};
+
+function TaskStack({
+  tasks,
+  selectedId,
+  onReorder,
+}: {
+  tasks: Task[];
+  selectedId: string | null;
+  onReorder: (ids: string[]) => void;
+}) {
+  const reorderSteps = useOrbitStore((s) => s.reorderSteps);
+  const ids = tasks.map((t) => t.id);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeKind, setActiveKind] = useState<"task" | "step" | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const activeStep: Step | null = (() => {
+    if (activeKind !== "step" || !activeId) return null;
+    for (const t of tasks) {
+      const step = t.steps.find((s) => s.id === activeId);
+      if (step) return step;
+    }
+    return null;
+  })();
+
+  function onDragStart(e: DragStartEvent) {
+    setActiveId(String(e.active.id));
+    setActiveKind((e.active.data.current?.kind as "task" | "step") ?? null);
+  }
+  function onDragEnd(e: DragEndEvent) {
+    const kind = e.active.data.current?.kind;
+    if (kind === "task") {
+      const from = ids.indexOf(String(e.active.id));
+      const to = e.over ? ids.indexOf(String(e.over.id)) : -1;
+      if (from >= 0 && to >= 0 && from !== to) onReorder(arrayMove(ids, from, to));
+    } else if (kind === "step") {
+      const taskId = e.active.data.current?.taskId as string | undefined;
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) {
+        const stepIds = task.steps.map((s) => s.id);
+        const from = stepIds.indexOf(String(e.active.id));
+        const to = e.over ? stepIds.indexOf(String(e.over.id)) : -1;
+        if (from >= 0 && to >= 0 && from !== to) reorderSteps(task.id, arrayMove(stepIds, from, to));
+      }
+    }
+    setActiveId(null);
+    setActiveKind(null);
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={typedCollision}
+      modifiers={[lockTaskToVertical]}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragCancel={() => {
+        setActiveId(null);
+        setActiveKind(null);
+      }}
+    >
+      <SortableContext items={ids} strategy={noShift}>
+        <div className="flex flex-col gap-8">
+          {tasks.map((task) => (
+            <TaskCard key={task.id} task={task} selected={task.id === selectedId} />
+          ))}
+        </div>
+      </SortableContext>
+      <DragOverlay dropAnimation={null} zIndex={80}>
+        {activeKind === "step" && activeStep ? <StepGhost step={activeStep} /> : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
 
