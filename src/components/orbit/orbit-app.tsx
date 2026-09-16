@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   DndContext,
   DragOverlay,
@@ -421,9 +422,12 @@ function TaskStack({
           ))}
         </div>
       </SortableContext>
-      <DragOverlay dropAnimation={null} zIndex={80}>
-        {activeKind === "step" && activeStep ? <StepGhost step={activeStep} /> : null}
-      </DragOverlay>
+      {createPortal(
+        <DragOverlay dropAnimation={null} zIndex={2400} style={{ pointerEvents: "none" }}>
+          {activeKind === "step" && activeStep ? <StepGhost step={activeStep} /> : null}
+        </DragOverlay>,
+        document.body,
+      )}
     </DndContext>
   );
 }

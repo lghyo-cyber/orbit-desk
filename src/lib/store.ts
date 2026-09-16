@@ -36,6 +36,7 @@ export type OrbitState = {
   updateStepWidth: (taskId: string, stepId: string, width: number) => void;
   removeStep: (taskId: string, stepId: string) => void;
   reorderSteps: (taskId: string, orderedIds: string[]) => void;
+  completeStep: (taskId: string, stepId: string) => void;
   completeCurrentStep: (taskId: string) => void;
   uncompleteStep: (taskId: string, stepId: string) => void;
   moveStep: (taskId: string, stepId: string, dir: -1 | 1) => void;
@@ -72,6 +73,19 @@ function stepsFinished(task: Task) {
 
 function isArchived(task: Task) {
   return Boolean(task.archivedAt);
+}
+
+function placeAfterLastDone(steps: Task["steps"], stepId: string, done: boolean): Task["steps"] {
+  const target = steps.find((s) => s.id === stepId);
+  if (!target || target.done === done) return steps;
+  const rest = steps.filter((s) => s.id !== stepId);
+  let insertAt = 0;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i]?.done) insertAt = i + 1;
+  }
+  const next = [...rest];
+  next.splice(insertAt, 0, { ...target, done });
+  return next;
 }
 
 /** Task is in the Done tab only after the user confirms Move to Done. */
@@ -235,11 +249,11 @@ export const useOrbitStore = create<OrbitState>()(
           }),
         })),
 
-      completeCurrentStep: (taskId) => {
+      completeStep: (taskId, stepId) => {
         const task = get().tasks.find((t) => t.id === taskId);
         if (!task) return;
-        const step = currentStep(task);
-        if (!step) return;
+        const step = task.steps.find((s) => s.id === stepId);
+        if (!step || step.done) return;
         const event: ActivityEvent = {
           id: uid("ev"),
           taskId,
@@ -249,15 +263,16 @@ export const useOrbitStore = create<OrbitState>()(
         };
         set((s) => ({
           tasks: s.tasks.map((t) =>
-            t.id === taskId
-              ? touch({
-                  ...t,
-                  steps: t.steps.map((st) => (st.id === step.id ? { ...st, done: true } : st)),
-                })
-              : t,
+            t.id === taskId ? touch({ ...t, steps: placeAfterLastDone(t.steps, stepId, true) }) : t,
           ),
           events: [event, ...s.events].slice(0, 40),
         }));
+      },
+
+      completeCurrentStep: (taskId) => {
+        const task = get().tasks.find((t) => t.id === taskId);
+        const step = task ? currentStep(task) : null;
+        if (step) get().completeStep(taskId, step.id);
       },
 
       uncompleteStep: (taskId, stepId) =>
@@ -267,7 +282,7 @@ export const useOrbitStore = create<OrbitState>()(
               ? touch({
                   ...t,
                   archivedAt: undefined,
-                  steps: t.steps.map((st) => (st.id === stepId ? { ...st, done: false } : st)),
+                  steps: placeAfterLastDone(t.steps, stepId, false),
                 })
               : t,
           ),

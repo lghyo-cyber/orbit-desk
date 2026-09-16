@@ -20,7 +20,7 @@ export function TaskCard({
   const selectTask = useOrbitStore((s) => s.selectTask);
   const updateTask = useOrbitStore((s) => s.updateTask);
   const removeTask = useOrbitStore((s) => s.removeTask);
-  const completeCurrentStep = useOrbitStore((s) => s.completeCurrentStep);
+  const completeStep = useOrbitStore((s) => s.completeStep);
   const archiveTask = useOrbitStore((s) => s.archiveTask);
   const unarchiveTask = useOrbitStore((s) => s.unarchiveTask);
   const uncompleteStep = useOrbitStore((s) => s.uncompleteStep);
@@ -34,7 +34,6 @@ export function TaskCard({
 
   const titleRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState(false);
   const {
     attributes: taskDrag,
     listeners: taskListeners,
@@ -68,21 +67,9 @@ export function TaskCard({
     return () => window.removeEventListener("orbit:focus-title", onFocus);
   }, [task.id]);
 
-  function advance() {
-    if (!current || pending) return;
-    setPending(true);
-    window.setTimeout(() => {
-      completeCurrentStep(task.id);
-      setPending(false);
-    }, 160);
-  }
-
   function onChipCheck(step: Step) {
-    if (step.done) {
-      uncompleteStep(task.id, step.id);
-      return;
-    }
-    if (current && step.id === current.id) advance();
+    if (step.done) uncompleteStep(task.id, step.id);
+    else completeStep(task.id, step.id);
   }
 
   function commitAdd() {
@@ -187,7 +174,6 @@ export function TaskCard({
               taskId={task.id}
               steps={task.steps}
               currentId={current?.id}
-              pending={pending}
               onChipCheck={onChipCheck}
               updateStepTitle={updateStepTitle}
               updateStepWidth={updateStepWidth}
@@ -245,7 +231,8 @@ export function TaskCard({
 export function StepGhost({ step }: { step: Step }) {
   return (
     <div
-      className="glass-tight flex h-8 max-w-full items-center gap-1 rounded-[10px] px-2 shadow-glass"
+      data-drag-ghost="step"
+      className="pointer-events-none glass-tight flex h-8 max-w-full items-center gap-1 rounded-[10px] px-2 shadow-glass"
       style={step.width != null ? { width: step.width } : undefined}
     >
       <GripVertical className="size-3 text-subtle" />
@@ -296,7 +283,6 @@ function StepBoard({
   taskId,
   steps,
   currentId,
-  pending,
   onChipCheck,
   updateStepTitle,
   updateStepWidth,
@@ -305,7 +291,6 @@ function StepBoard({
   taskId: string;
   steps: Step[];
   currentId?: string;
-  pending: boolean;
   onChipCheck: (step: Step) => void;
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
   updateStepWidth: (taskId: string, stepId: string, width: number) => void;
@@ -321,7 +306,6 @@ function StepBoard({
             step={step}
             index={i}
             isCurrent={currentId === step.id}
-            pending={pending}
             taskId={taskId}
             onChipCheck={onChipCheck}
             updateStepTitle={updateStepTitle}
@@ -338,7 +322,6 @@ function StepChip({
   step,
   index,
   isCurrent,
-  pending,
   taskId,
   onChipCheck,
   updateStepTitle,
@@ -348,7 +331,6 @@ function StepChip({
   step: Step;
   index: number;
   isCurrent: boolean;
-  pending: boolean;
   taskId: string;
   onChipCheck: (step: Step) => void;
   updateStepTitle: (taskId: string, stepId: string, title: string) => void;
@@ -408,6 +390,7 @@ function StepChip({
     <div
       ref={setRefs}
       data-step-id={step.id}
+      data-step-done={step.done ? "true" : "false"}
       style={{
         width: width ?? undefined,
       }}
@@ -436,9 +419,8 @@ function StepChip({
         <GripVertical className="size-3" />
       </button>
       <StepCheck
-        checked={step.done || (pending && isCurrent)}
+        checked={step.done}
         onToggle={() => onChipCheck(step)}
-        disabled={!step.done && !isCurrent}
       />
       <input
         value={step.title}
